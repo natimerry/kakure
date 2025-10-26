@@ -1,0 +1,9 @@
+[workspace]
+members = ["kakure-cli","kakure-core", "kakure-vm"]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1"
+goblin = "0.8"
+log = "0.4"
+env_logger = "0.11"
