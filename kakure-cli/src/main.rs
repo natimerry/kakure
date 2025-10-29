@@ -28,6 +28,10 @@ enum Commands {
         path: PathBuf,
         frame_type: PossibleFrames,
     },
+
+    GetEntry {
+        path: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -35,6 +39,14 @@ fn main() -> Result<()> {
     let args = Args::parse();
 
     match args.command {
+        Commands::GetEntry { path } => {
+            log::info!("Opening binary: {}", path.display());
+            let binary = Binary::open(&path)?;
+
+            let entry = binary.get_entry_offset()?;
+
+            log::info!("{:#X}", entry);
+        }
         Commands::ListSections { path } => {
             log::info!("Opening binary: {}", path.display());
             let binary = Binary::open(&path);
@@ -83,7 +95,7 @@ fn main() -> Result<()> {
 
                 if let None = section_data {
                     log::error!("Section does not exist");
-                    return Err(anyhow!("Invalid section ased to parse"));
+                    return Err(anyhow!("Invalid section asked to parse"));
                 }
                 let section_data = section_data.unwrap();
 
@@ -132,6 +144,7 @@ fn main() -> Result<()> {
                 }
             }
         }
+        _ => unimplemented!(),
     }
 
     Ok(())

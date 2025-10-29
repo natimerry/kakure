@@ -1,4 +1,6 @@
+mod call_graph;
 pub mod frame_analyzers;
+
 pub use frame_analyzers::*;
 
 #[derive(Debug, Clone)]

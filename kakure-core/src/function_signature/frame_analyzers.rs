@@ -1,5 +1,4 @@
 pub mod eh_frame;
-
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -79,46 +78,6 @@ pub struct FrameAnalyzer<'a> {
     pub data: &'a [u8],
     pub base_address: u64,
 }
-
-// ─────────────────────────────────────────────
-// Common Information Entry (CIE) Layout (.eh_frame)
-// ─────────────────────────────────────────────
-// Each entry in .eh_frame starts with a length field.
-// If CIE_id == 0, it's a CIE. Otherwise, it's an FDE (Frame Description Entry).
-//
-// Offsets are relative to the start of the entry (after length).
-//
-// [0x00 - 0x03]  4 bytes   Length (excluding this field itself)
-// [0x04 - 0x07]  4 bytes   CIE ID (0 for .eh_frame, 0xFFFFFFFF for .debug_frame)
-//
-// ─────────────── CIE body starts ───────────────
-//
-// [0x08]         1 byte    Version (usually 1 or 3)
-// [0x09 .. ?]    N bytes   Augmentation string (null-terminated ASCII)
-//
-// After augmentation string:
-//
-// [?]            ULEB128   Code alignment factor
-// [?]            SLEB128   Data alignment factor
-// [?]            1 byte    Return address register (encoded as DWARF reg num)
-//
-// If augmentation string starts with 'z':
-// [?]            ULEB128   Augmentation data length
-//
-// Then optionally, depending on augmentation string letters:
-//
-// 'L' → 1 byte   LSDA encoding
-// 'P' → variable  Personality routine pointer (encoded per augmentation encoding)
-// 'R' → 1 byte   FDE encoding
-//
-// ─────────────── CIE Instructions ───────────────
-//
-// Remaining bytes until end of CIE length:
-// [ ... ]        N bytes   Initial Instructions (DWARF Call Frame Instructions)
-//
-// ───────────────
-// Total size = 4 (length) + 4 (CIE_id) + body_length
-// ───────────────
 
 impl<'a> FrameAnalyzer<'a> {
     pub fn new(data: &'a [u8], base_address: u64) -> Self {

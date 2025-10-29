@@ -1,15 +1,63 @@
+use crate::header::elf::Elf64Ehdr;
+use crate::header::Header;
+use crate::{FunctionSignature, KSection, PlatformType};
 use anyhow::anyhow;
-use goblin::{Object};
-use std::io::{self, Read, Seek, SeekFrom};
+use byteorder::{ReadBytesExt, LE};
+use goblin::Object;
+use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::mem::MaybeUninit;
 
-use crate::{KSection, PlatformType};
 
+// TODO: switch function_signatures to go from trait to living inside binary object
 pub struct Binary {
     pub path: String,
     pub section_headers: Vec<KSection>,
     pub is_stripped: bool,
+    pub header: Box<dyn Header>,
 }
 
+fn read_hdr<R: io::Read + Seek>(cur: &mut R) -> anyhow::Result<Elf64Ehdr> {
+    let mut e_ident = [0u8; 16];
+    cur.read_exact(&mut e_ident)?;
+
+    let e_type = cur.read_u16::<LE>()?;
+    let e_machine = cur.read_u16::<LE>()?;
+
+    let e_version = cur.read_u32::<LE>()?;
+
+    let e_entry = cur.read_u64::<LE>()?;
+
+    let e_phoff = cur.read_u64::<LE>()?;
+    let e_shoff = cur.read_u64::<LE>()?;
+
+    let e_flags = cur.read_u32::<LE>()?;
+    let e_ehsize = cur.read_u16::<LE>()?;
+
+    let e_phentsize = cur.read_u16::<LE>()?;
+    let e_phnum = cur.read_u16::<LE>()?;
+    let e_shentsize = cur.read_u16::<LE>()?;
+    let e_shnum = cur.read_u16::<LE>()?;
+    let e_shstrndx = cur.read_u16::<LE>()?;
+
+    let elf = Elf64Ehdr {
+        e_ident,
+        e_type,
+        e_machine,
+        e_version,
+        e_entry,
+        e_phoff,
+        e_shoff,
+        e_flags,
+        e_ehsize,
+        e_phentsize,
+        e_phnum,
+        e_shentsize,
+        e_shnum,
+        e_shstrndx,
+    };
+
+    Ok(elf)
+}
 impl Binary {
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> anyhow::Result<Self> {
         let mut file = std::fs::File::open(&path)?;
@@ -21,9 +69,14 @@ impl Binary {
         let mut sections = Vec::new();
         let mut cursor = std::io::Cursor::new(&buf);
         let mut stripped = false;
+        let mut header = Box::new_uninit();
 
         match obj {
             Object::Elf(elf) => {
+                // Read binary ELF headers and store
+                let elf_hdr = read_hdr(&mut cursor)?;
+                header.write(elf_hdr);
+
                 let has_section_headers = elf.header.e_shnum > 0 && elf.header.e_shoff != 0;
                 let has_program_headers = elf.header.e_phnum > 0 && elf.header.e_phoff != 0;
 
@@ -51,8 +104,7 @@ impl Binary {
                         .collect();
                 } else {
                     log::warn!("ELF binary appears stripped (no section headers). Falling back to Program Headers (Segments).");
-                    sections = KSection::from_goblin_ph(&mut cursor, &elf,buf_len)?;
-                    
+                    sections = KSection::from_goblin_ph(&mut cursor, &elf, buf_len)?;
                 }
             }
             Object::PE(pe) => {
@@ -76,10 +128,16 @@ impl Binary {
             }
         }
 
+        let header = unsafe { header.assume_init() };
         Ok(Self {
             path: path.as_ref().display().to_string(),
             section_headers: sections,
             is_stripped: stripped,
+            header,
         })
+    }
+
+    pub fn get_entry_offset(&self) -> anyhow::Result<u64> {
+        Ok(self.header.entry_point())
     }
 }
