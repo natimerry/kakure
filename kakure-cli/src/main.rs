@@ -38,6 +38,7 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
     let args = Args::parse();
 
+    #[allow(unreachable_patterns)]
     match args.command {
         Commands::GetEntry { path } => {
             log::info!("Opening binary: {}", path.display());
@@ -98,7 +99,6 @@ fn main() -> Result<()> {
                     return Err(anyhow!("Invalid section asked to parse"));
                 }
                 let section_data = section_data.unwrap();
-
                 match frame_type {
                     PossibleFrames::EhFrame => {
                         let fa = FrameAnalyzer::new(&section_data, base_address);

@@ -1,11 +1,10 @@
 use crate::header::elf::Elf64Ehdr;
 use crate::header::Header;
-use crate::{FunctionSignature, KSection, PlatformType};
+use crate::{KSection, PlatformType};
 use anyhow::anyhow;
 use byteorder::{ReadBytesExt, LE};
 use goblin::Object;
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
-use std::mem::MaybeUninit;
+use std::io::{self, Read, Seek, SeekFrom};
 
 
 // TODO: switch function_signatures to go from trait to living inside binary object
