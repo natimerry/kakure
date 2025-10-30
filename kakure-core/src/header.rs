@@ -1,3 +1,5 @@
+use std::io;
+
 pub mod elf;
 
 pub trait Header: std::fmt::Debug + Send + Sync {
@@ -15,4 +17,7 @@ pub trait Header: std::fmt::Debug + Send + Sync {
 
     /// Returns true if the binary represents an executable (vs object/lib).
     fn is_executable(&self) -> bool;
+
+    /// Creates a new object by reading
+    fn from_reader<R: io::Read + io::Seek>(cur: &mut R) -> anyhow::Result<Self> where Self: Sized;
 }

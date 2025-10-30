@@ -1,4 +1,7 @@
 use crate::header::Header;
+use byteorder::{ReadBytesExt, LE};
+use std::io;
+use std::io::{Read, Seek};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -39,4 +42,27 @@ impl Header for Elf64Ehdr {
     fn is_executable(&self) -> bool {
         self.e_type == 0x2
     }
+
+    fn from_reader<R: io::Read + Seek>(cur: &mut R) -> anyhow::Result<Elf64Ehdr> {
+        let mut e_ident = [0u8; 16];
+        cur.read_exact(&mut e_ident)?;
+
+        Ok(Elf64Ehdr {
+            e_ident,
+            e_type: cur.read_u16::<LE>()?,
+            e_machine: cur.read_u16::<LE>()?,
+            e_version: cur.read_u32::<LE>()?,
+            e_entry: cur.read_u64::<LE>()?,
+            e_phoff: cur.read_u64::<LE>()?,
+            e_shoff: cur.read_u64::<LE>()?,
+            e_flags: cur.read_u32::<LE>()?,
+            e_ehsize: cur.read_u16::<LE>()?,
+            e_phentsize: cur.read_u16::<LE>()?,
+            e_phnum: cur.read_u16::<LE>()?,
+            e_shentsize: cur.read_u16::<LE>()?,
+            e_shnum: cur.read_u16::<LE>()?,
+            e_shstrndx: cur.read_u16::<LE>()?,
+        })
+    }
 }
+

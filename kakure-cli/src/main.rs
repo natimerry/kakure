@@ -1,150 +1,81 @@
-use std::path::PathBuf;
-
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use env_logger::Env;
-use kakure_core::{
-    Binary,
-    eh_frame::FdeParser,
-    frame_analyzers::{FrameAnalyzer, PossibleFrames},
-};
+use kakure_core::Binary;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about)]
-struct Args {
+/// Simple ELF introspection CLI
+#[derive(Parser)]
+#[command(
+    name = "bininfo",
+    about = "Inspect ELF binaries (entry point, functions, and sections)",
+    version,
+    author
+)]
+struct Cli {
+    /// Path to binary file
+    #[arg(required = true)]
+    path: std::path::PathBuf,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Command,
 }
 
-#[derive(Subcommand, Debug)]
-enum Commands {
-    /// List sections from the binary
-    ListSections {
-        /// Path to the binary to analyze
-        path: PathBuf,
-    },
-
-    AnalyseFrame {
-        path: PathBuf,
-        frame_type: PossibleFrames,
-    },
-
-    GetEntry {
-        path: PathBuf,
-    },
+#[derive(Subcommand)]
+enum Command {
+    /// Show entry point of binary
+    Entry,
+    /// Show all discovered functions
+    Functions,
+    /// List all sections
+    Sections,
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
-    let args = Args::parse();
+    env_logger::init();
+    let cli = Cli::parse();
 
-    #[allow(unreachable_patterns)]
-    match args.command {
-        Commands::GetEntry { path } => {
-            log::info!("Opening binary: {}", path.display());
-            let binary = Binary::open(&path)?;
+    let bin = Binary::open(&cli.path)?;
 
-            let entry = binary.get_entry_offset()?;
-
-            log::info!("{:#X}", entry);
+    match cli.command {
+        Command::Entry => {
+            let entry = bin.get_entry_offset()?;
+            println!("Entry point: 0x{entry:x}");
         }
-        Commands::ListSections { path } => {
-            log::info!("Opening binary: {}", path.display());
-            let binary = Binary::open(&path);
 
-            match binary {
-                Ok(binary) => {
-                    log::info!("Sections in {}:", path.display());
-                    for sec in &binary.section_headers {
-                        println!(
-                            "- {} | vma: 0x{:x} | size: {} bytes | offset: 0x{:x}",
-                            sec.name,
-                            sec.vma,
-                            sec.raw_len(),
-                            sec.file_offset
-                        );
-                    }
-                }
-                Err(e) => {
-                    log::error!("Could not open binary: {}", e);
+        Command::Functions => {
+            if bin.functions.is_empty() {
+                println!("No functions found (.eh_frame missing or stripped binary).");
+            } else {
+                println!(
+                    "{:<20} {:<18} {:<18} {:<10}",
+                    "Function", "Start", "End", "Size"
+                );
+                println!("{}", "-".repeat(70));
+                for func in &bin.functions {
+                    println!(
+                        "{:<20} 0x{:<16x} 0x{:<16x} {:<10}",
+                        func.function_identifier, func.start, func.end, func.size
+                    );
                 }
             }
         }
-        Commands::AnalyseFrame { frame_type, path } => {
-            log::info!("Opening binary: {}", path.display());
-            let binary = Binary::open(&path);
 
-            if let Ok(binary) = binary {
-                // build a map of sections and their offsets first
-
-                let x: std::collections::HashMap<String, &Vec<u8>> = binary
-                    .section_headers
-                    .iter()
-                    .map(|x| {
-                        let data = x.raw_data();
-                        (x.name.clone(), (data))
-                    })
-                    .collect();
-
-                let base_address = binary
-                    .section_headers
-                    .iter()
-                    .find(|sh| sh.name == frame_type.to_string())
-                    .map(|sh| sh.vma)
-                    .unwrap_or(0);
-                let section_data = x.get(&frame_type.to_string());
-
-                if let None = section_data {
-                    log::error!("Section does not exist");
-                    return Err(anyhow!("Invalid section asked to parse"));
-                }
-                let section_data = section_data.unwrap();
-                match frame_type {
-                    PossibleFrames::EhFrame => {
-                        let fa = FrameAnalyzer::new(&section_data, base_address);
-                        let functions: Vec<kakure_core::FunctionSignature> = fa.parse_eh_frame()?;
-
-                        for func in &functions {
-                            log::info!(
-                                "{}: start=0x{:x}, end=0x{:x}, size={}",
-                                func.function_identifier,
-                                func.start,
-                                func.end,
-                                func.size
-                            );
-                        }
-                    }
-                    PossibleFrames::EhFrameHdr => {
-                        let fa = FrameAnalyzer::new(&section_data, base_address);
-                        let functions: Vec<kakure_core::FunctionSignature> =
-                            fa.parse_eh_frame_headers()?;
-
-                        for func in &functions {
-                            log::info!(
-                                "{}: start=0x{:x}, end=0x{:x}, size={}",
-                                func.function_identifier,
-                                func.start,
-                                func.end,
-                                func.size
-                            );
-                        }
-                    }
-                    PossibleFrames::InitArray => todo!(),
-                    PossibleFrames::FiniArray => todo!(),
-                    PossibleFrames::Ctors => todo!(),
-                    PossibleFrames::Dtors => todo!(),
-                    PossibleFrames::Text => todo!(),
-                    PossibleFrames::Symtab => todo!(),
-                    PossibleFrames::DynSym => todo!(),
-                    PossibleFrames::Plt => todo!(),
-                    PossibleFrames::Got => todo!(),
-                    PossibleFrames::GccExceptTable => todo!(),
-                    PossibleFrames::Pdata => todo!(),
-                    PossibleFrames::DebugFrame => todo!(),
+        Command::Sections => {
+            if bin.section_headers.is_empty() {
+                println!("No sections found (possibly stripped binary).");
+            } else {
+                println!(
+                    "{:<20} {:<18} {:<10} {:<10} {:<10}",
+                    "Section", "VMA", "Size", "Offset", "Flags"
+                );
+                println!("{}", "-".repeat(80));
+                for s in &bin.section_headers {
+                    println!(
+                        "{:<20} 0x{:<16x} {:<10x} {:<10x} {:<10x}",
+                        s.name, s.vma, s.size, s.file_offset, s.flags
+                    );
                 }
             }
         }
-        _ => unimplemented!(),
     }
 
     Ok(())
