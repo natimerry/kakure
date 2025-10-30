@@ -72,15 +72,3 @@ impl fmt::Display for PossibleFrames {
         write!(f, "{}", name)
     }
 }
-
-#[derive(Debug)]
-pub struct FrameAnalyzer<'a> {
-    pub data: &'a [u8],
-    pub base_address: u64,
-}
-
-impl<'a> FrameAnalyzer<'a> {
-    pub fn new(data: &'a [u8], base_address: u64) -> Self {
-        Self { data, base_address }
-    }
-}

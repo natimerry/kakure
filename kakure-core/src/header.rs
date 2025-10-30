@@ -19,5 +19,7 @@ pub trait Header: std::fmt::Debug + Send + Sync {
     fn is_executable(&self) -> bool;
 
     /// Creates a new object by reading
-    fn from_reader<R: io::Read + io::Seek>(cur: &mut R) -> anyhow::Result<Self> where Self: Sized;
+    fn from_reader<R: io::Read + io::Seek>(cur: &mut R) -> anyhow::Result<Self>
+    where
+        Self: Sized;
 }

@@ -4,12 +4,11 @@ use crate::header::Header;
 use crate::{FunctionSignature, KSection, PlatformType};
 use anyhow::anyhow;
 use anyhow::Result;
-use byteorder::{ReadBytesExt, LE};
-use gimli::{EhFrame, NativeEndian, UnwindSection};
+use byteorder::LE;
+use gimli::{NativeEndian, UnwindSection};
 use goblin::Object;
 use std::io::{self, Read, Seek, SeekFrom};
 
-// TODO: switch function_signatures to go from trait to living inside binary object
 pub struct Binary {
     pub path: String,
     pub section_headers: Vec<KSection>,

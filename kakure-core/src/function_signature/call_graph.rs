@@ -1,5 +1,4 @@
-
-enum CallFormat{
+enum CallFormat {
     FastCall,
     StdCall,
 }

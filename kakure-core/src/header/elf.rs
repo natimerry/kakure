@@ -1,25 +1,80 @@
 use crate::header::Header;
 use byteorder::{ReadBytesExt, LE};
 use std::io;
-use std::io::{Read, Seek};
 
+/// Represents the ELF (Executable and Linkable Format) header for a 64-bit object file.
+///
+/// This structure corresponds to the standard `Elf64_Ehdr` defined in the ELF specification.
+/// It appears at the very beginning of every ELF file and contains metadata describing
+/// the file’s organization and layout.
+///
+/// Reference: [ELF Specification v1.2](https://refspecs.linuxfoundation.org/elf/elf.pdf)
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Elf64Ehdr {
-    pub e_ident: [u8; 16], // Magic number and other info
-    pub e_type: u16,       // Object file type
-    pub e_machine: u16,    // Architecture
-    pub e_version: u32,    // Object file version
-    pub e_entry: u64,      // Entry point virtual address
-    pub e_phoff: u64,      // Program header table file offset
-    pub e_shoff: u64,      // Section header table file offset
-    pub e_flags: u32,      // Processor-specific flags
-    pub e_ehsize: u16,     // ELF header size in bytes
-    pub e_phentsize: u16,  // Program header table entry size
-    pub e_phnum: u16,      // Program header table entry count
-    pub e_shentsize: u16,  // Section header table entry size
-    pub e_shnum: u16,      // Section header table entry count
-    pub e_shstrndx: u16,   // Section header string table index
+    /// ELF identification bytes (magic number and other information).
+    ///
+    /// The first 4 bytes should be `0x7F`, `'E'`, `'L'`, `'F'`.
+    /// Remaining bytes encode class (32/64-bit), endianness, and version.
+    pub e_ident: [u8; 16],
+
+    /// Object file type (e.g. relocatable, executable, shared, core).
+    ///
+    /// Common values:
+    /// - `ET_NONE` (0): No file type
+    /// - `ET_REL` (1): Relocatable file
+    /// - `ET_EXEC` (2): Executable file
+    /// - `ET_DYN` (3): Shared object
+    /// - `ET_CORE` (4): Core dump
+    pub e_type: u16,
+
+    /// Target architecture (e.g., x86_64, ARM).
+    ///
+    /// Common values:
+    /// - `EM_X86_64` (62)
+    /// - `EM_AARCH64` (183)
+    pub e_machine: u16,
+
+    /// ELF version (usually set to `EV_CURRENT` = 1).
+    pub e_version: u32,
+
+    /// Virtual address of the program entry point.
+    ///
+    /// This is where execution starts when the ELF is loaded.
+    pub e_entry: u64,
+
+    /// File offset of the program header table.
+    ///
+    /// Points to an array of `Elf64Phdr` entries.
+    pub e_phoff: u64,
+
+    /// File offset of the section header table.
+    ///
+    /// Points to an array of `Elf64Shdr` entries.
+    pub e_shoff: u64,
+
+    /// Processor-specific flags.
+    pub e_flags: u32,
+
+    /// Size of this ELF header (usually `64` bytes for ELF64).
+    pub e_ehsize: u16,
+
+    /// Size of one entry in the program header table.
+    pub e_phentsize: u16,
+
+    /// Number of entries in the program header table.
+    pub e_phnum: u16,
+
+    /// Size of one entry in the section header table.
+    pub e_shentsize: u16,
+
+    /// Number of entries in the section header table.
+    pub e_shnum: u16,
+
+    /// Index of the section header string table.
+    ///
+    /// This section contains the names of all other sections.
+    pub e_shstrndx: u16,
 }
 
 impl Header for Elf64Ehdr {
@@ -43,7 +98,7 @@ impl Header for Elf64Ehdr {
         self.e_type == 0x2
     }
 
-    fn from_reader<R: io::Read + Seek>(cur: &mut R) -> anyhow::Result<Elf64Ehdr> {
+    fn from_reader<R: io::Read + io::Seek>(cur: &mut R) -> anyhow::Result<Elf64Ehdr> {
         let mut e_ident = [0u8; 16];
         cur.read_exact(&mut e_ident)?;
 
@@ -65,4 +120,3 @@ impl Header for Elf64Ehdr {
         })
     }
 }
-
