@@ -1,4 +1,6 @@
 pub mod eh_frame;
+pub mod symtab;
+
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
