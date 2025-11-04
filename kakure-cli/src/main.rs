@@ -1,107 +1,149 @@
 use anyhow::{Result, bail};
-use clap::{Parser, Subcommand, ValueEnum};
 use colored::*;
 use kakure_core::BinaryAnalysis;
-use log::{Level, LevelFilter, Record};
+use log::{Level, LevelFilter};
+use rustyline::history::DefaultHistory;
+use rustyline::{Editor, error::ReadlineError};
 use std::fs::File;
 use std::io::Write;
 use tabled::{Table, Tabled};
 
-/// Available analysis targets
-#[derive(ValueEnum, Clone, Debug)]
-enum AnalysisTarget {
-    /// Analyze functions from .eh_frame (unwind info)
-    EhFrame,
-    /// Analyze symbols from .symtab (symbol table)
-    Symtab,
-    /// Analyze symbols from .dynsym (dynamic symbol table)
-    DynSym,
-}
-
-/// Actions to run after analysis completes
-#[derive(ValueEnum, Clone, Debug)]
-enum Action {
-    /// Print discovered functions in a table
-    ListFunctions,
-    /// Dump discovered functions to JSON (--out required)
-    DumpJson,
-    /// No extra action
-    None,
-}
-
-/// CLI subcommands
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Perform analysis on a binary and optionally run an action
-    Analyze {
-        /// Path to the input binary
-        #[arg(short, long)]
-        input: String,
-
-        /// Analysis targets to perform
-        #[arg(
-            short,
-            long,
-            value_enum,
-            num_args = 1..,
-            default_values_t = vec![AnalysisTarget::EhFrame, AnalysisTarget::Symtab],
-            help = "Select one or more analyses to perform"
-        )]
-        targets: Vec<AnalysisTarget>,
-
-        /// Action to run after analyses complete
-        #[arg(long, value_enum, default_value_t = Action::None)]
-        action: Action,
-
-        /// Output path used by some actions (e.g. --action dump-json)
-        #[arg(long)]
-        out: Option<String>,
-    },
-
-    /// List sections in the binary (like `readelf -S`)
-    ListSections {
-        /// Path to the input binary
-        #[arg(short, long)]
-        input: String,
-    },
-
-    /// (Optional) — List symbols (can be implemented later)
-    #[command(hide = true)]
-    ListSymbols {
-        /// Path to the input binary
-        #[arg(short, long)]
-        input: String,
-    },
-}
-
-/// Root CLI
-#[derive(Parser, Debug)]
-#[command(author, version, about = "🧠 Kakure Binary Analysis CLI", long_about = None)]
-struct Args {
-    #[command(subcommand)]
-    command: Command,
-}
-
 fn main() -> Result<()> {
     setup_logger();
 
-    let args = Args::parse();
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: {} <binary>", args[0]);
+        std::process::exit(1);
+    }
 
-    match args.command {
-        Command::Analyze {
-            input,
-            targets,
-            action,
-            out,
-        } => run_analysis_and_action(&input, targets, action, out)?,
-        Command::ListSections { input } => list_sections(&input)?,
-        Command::ListSymbols { input } => list_symbols(&input)?,
+    let input = &args[1];
+    let mut analysis = BinaryAnalysis::open(input)?;
+    log::info!("Opened binary: {}", input.bright_blue());
+
+    let mut rl = Editor::<(), DefaultHistory>::new()?;
+    println!("{}", "🧠 Kakure Interactive Shell".bright_green().bold());
+    println!("Type 'help' for a list of commands.");
+
+    loop {
+        let line = rl.readline("kakure> ");
+        match line {
+            Ok(cmd) => {
+                rl.add_history_entry(cmd.as_str())?;
+                if let Err(e) = handle_command(&cmd, &mut analysis, input) {
+                    log::error!("{}", e);
+                }
+            }
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                println!("\nExiting...");
+                break;
+            }
+            Err(e) => {
+                log::error!("Readline error: {e}");
+                break;
+            }
+        }
     }
 
     Ok(())
 }
 
-/// Setup colorful logging
+fn analyze_target(analysis: &mut BinaryAnalysis, target: &str) -> Result<()> {
+    match target {
+        "eh_frame" => {
+            log::info!("{}", "Analyzing .eh_frame...".cyan());
+            if let Err(e) = analysis.analyze_eh_frame() {
+                log::error!("Failed .eh_frame: {e}");
+            }
+        }
+        "symtab" => {
+            log::info!("{}", "Analyzing .symtab...".cyan());
+            if let Err(e) = analysis.analyze_symtab() {
+                log::error!("Failed .symtab: {e}");
+            }
+        }
+        "dynsym" => {
+            log::info!("{}", "Analyzing .dynsym...".cyan());
+            if let Err(e) = analysis.analyze_dynsym() {
+                log::warn!("DynSym analysis failed or unimplemented: {e}");
+            }
+        }
+        _ => log::warn!("Unknown analysis target: {target}"),
+    }
+
+    analysis.identify_entry_point();
+    analysis.sort_functions();
+    analysis.deduplicate_functions();
+    log::info!("{}", "Analysis complete!".green());
+    Ok(())
+}
+
+/// Command handler — radare2 style
+fn handle_command(cmd: &str, analysis: &mut BinaryAnalysis, input: &str) -> Result<()> {
+    let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
+    if parts.is_empty() {
+        return Ok(());
+    }
+
+    match parts[0] {
+        "help" => print_help(),
+        "afa" => analyze_all(analysis)?,
+        "af" => {
+            if let Some(arg) = parts.get(1) {
+                match *arg {
+                    "ehframe" | "eh" => analyze_target(analysis, "eh_frame")?,
+                    "symtab" | "sym" => analyze_target(analysis, "symtab")?,
+                    "dynsym" | "dyn" => analyze_target(analysis, "dynsym")?,
+                    _ => log::warn!(
+                        "Unknown analysis type '{}'. Use: ehframe, symtab, dynsym",
+                        arg
+                    ),
+                }
+            } else {
+                log::warn!("Usage: af <ehframe|symtab|dynsym>");
+            }
+        }
+        "afl" => print_function_table(analysis),
+        "afj" => dump_functions_json(analysis, parts.get(1).map(|s| s.to_string()))?,
+        "iS" | "lS" => list_sections(input)?,
+        "q" | "quit" | "exit" => {
+            println!("{}", "Bye 👋".bright_green());
+            std::process::exit(0);
+        }
+        other => log::warn!("Unknown command: '{}'. Try 'help'", other),
+    }
+    Ok(())
+}
+
+fn print_help() {
+    println!("\n{}", "Available commands:".bright_yellow().bold());
+    println!("  aa       analyze all (.eh_frame, .symtab)");
+    println!("  afl      list functions");
+    println!("  ij [out] dump functions to JSON (optionally to path)");
+    println!("  iS       list sections");
+    println!("  help     show this help message");
+    println!("  q        quit\n");
+}
+
+/// Run both .eh_frame and .symtab analyses
+fn analyze_all(analysis: &mut BinaryAnalysis) -> Result<()> {
+    log::info!("{}", "Analyzing .eh_frame...".cyan());
+    if let Err(e) = analysis.analyze_eh_frame() {
+        log::error!("Failed .eh_frame: {e}");
+    }
+    log::info!("{}", "Analyzing .symtab...".cyan());
+    if let Err(e) = analysis.analyze_symtab() {
+        log::error!("Failed .symtab: {e}");
+    }
+
+    analysis.identify_entry_point();
+    analysis.sort_functions();
+    analysis.deduplicate_functions();
+    log::info!("{}", "Analysis complete!".green());
+    Ok(())
+}
+
+/// Setup colorful logger
 fn setup_logger() {
     env_logger::Builder::new()
         .filter_level(LevelFilter::Info)
@@ -116,53 +158,6 @@ fn setup_logger() {
             writeln!(buf, "[{}] {}", level, record.args())
         })
         .init();
-}
-
-/// Run analyses and then perform the chosen action
-fn run_analysis_and_action(
-    input: &str,
-    targets: Vec<AnalysisTarget>,
-    action: Action,
-    out: Option<String>,
-) -> Result<()> {
-    log::info!("Opening binary: {}", input.bright_blue());
-    let mut analysis = BinaryAnalysis::open(input)?;
-
-    for target in &targets {
-        match target {
-            AnalysisTarget::EhFrame => {
-                log::info!("{}", "Analyzing .eh_frame...".cyan());
-                if let Err(e) = analysis.analyze_eh_frame() {
-                    log::error!("Failed to analyze .eh_frame: {e}");
-                }
-            }
-            AnalysisTarget::Symtab => {
-                log::info!("{}", "Analyzing .symtab...".cyan());
-                if let Err(e) = analysis.analyze_symtab() {
-                    log::error!("Failed to analyze .symtab: {e}");
-                }
-            }
-            AnalysisTarget::DynSym => {
-                log::info!("{}", "Analyzing .dynsym...".cyan());
-                if let Err(e) = analysis.analyze_dynsym() {
-                    log::warn!("DynSym analysis failed or unimplemented: {e}");
-                }
-            }
-        }
-    }
-
-    log::info!("{}", "Finalizing analysis...".green());
-    analysis.identify_entry_point();
-    analysis.sort_functions();
-    analysis.deduplicate_functions();
-
-    match action {
-        Action::None => log::info!("{}", "No post-analysis action requested.".yellow()),
-        Action::ListFunctions => print_function_table(&analysis),
-        Action::DumpJson => dump_functions_json(&analysis, out)?,
-    }
-
-    Ok(())
 }
 
 /// Table-friendly view for functions
@@ -180,6 +175,11 @@ struct FunctionRow {
 
 /// Print functions in a formatted table
 fn print_function_table(analysis: &BinaryAnalysis) {
+    if analysis.functions().is_empty() {
+        println!("{}", "No functions analyzed yet. Run `aa` first.".yellow());
+        return;
+    }
+
     let rows: Vec<_> = analysis
         .functions()
         .iter()
@@ -226,12 +226,12 @@ fn dump_functions_json(analysis: &BinaryAnalysis, out: Option<String>) -> Result
 
     let json = serde_json::to_string_pretty(&view)?;
 
-    if let Some(out) = out {
-        File::create(&out)?.write_all(json.as_bytes())?;
+    if let Some(path) = out {
+        File::create(&path)?.write_all(json.as_bytes())?;
         log::info!(
             "{} {}",
             "JSON dump written to:".bright_green(),
-            out.bright_blue()
+            path.bright_blue()
         );
     } else {
         println!("{json}");
@@ -239,26 +239,24 @@ fn dump_functions_json(analysis: &BinaryAnalysis, out: Option<String>) -> Result
     Ok(())
 }
 
-/// Table for ELF sections
-#[derive(Tabled)]
-struct SectionRow {
-    #[tabled(rename = "Name")]
-    name: String,
-    #[tabled(rename = "VMA")]
-    vma: String,
-    #[tabled(rename = "Size (bytes)")]
-    size: String,
-}
-
-/// List all ELF sections (pretty table)
+/// List ELF sections
 fn list_sections(input: &str) -> Result<()> {
     let analysis = BinaryAnalysis::open(input)?;
+
+    #[derive(Tabled)]
+    struct SectionRow {
+        #[tabled(rename = "Name")]
+        name: String,
+        #[tabled(rename = "VMA")]
+        vma: String,
+        #[tabled(rename = "Size (bytes)")]
+        size: String,
+    }
 
     println!(
         "\n{}",
         format!("📦 Sections in '{}':", input).bright_green().bold()
     );
-
     let rows: Vec<_> = analysis
         .section_headers
         .iter()
@@ -270,36 +268,7 @@ fn list_sections(input: &str) -> Result<()> {
         .collect();
 
     let mut table = Table::new(rows);
-
     let table = table.with(tabled::settings::Style::modern());
     println!("{table}");
-    Ok(())
-}
-
-/// Placeholder for listing symbols
-fn list_symbols(input: &str) -> Result<()> {
-    let analysis = BinaryAnalysis::open(input)?;
-    println!(
-        "{} '{}':",
-        "🔣 Symbols in".bright_cyan().bold(),
-        input.bright_blue()
-    );
-
-    let strtab = analysis.get_section(".strtab");
-    if let Some(str_data) = strtab {
-        for sym in analysis.symbols()? {
-            let st_type = (sym.st_info) & 0xF;
-            let symbol_name = sym.name_from_symtab(&str_data.raw_data())?;
-            println!(
-                "  {:<30} value={} size={} type={}",
-                symbol_name.bright_white(),
-                format!("0x{:016x}", sym.st_value).bright_yellow(),
-                sym.st_size,
-                st_type
-            );
-        }
-    } else {
-        bail!("Strtab not in binary");
-    }
     Ok(())
 }

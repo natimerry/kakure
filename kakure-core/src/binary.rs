@@ -248,7 +248,7 @@ impl BinaryAnalysis {
                 entry_addr
             );
             let entry_sig = FunctionSignature {
-                function_identifier: "entry".to_string(),
+                function_identifier: "entry (_start)".to_string(),
                 start: entry_addr,
                 size: 0,
                 end: entry_addr, // optional: same as start, since we don’t know size
