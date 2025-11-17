@@ -1,6 +1,7 @@
 use std::io;
 
 pub mod elf;
+pub mod pe;
 
 pub trait Header: std::fmt::Debug + Send + Sync {
     /// Returns the virtual address of the entry point.
