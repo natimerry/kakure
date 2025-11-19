@@ -1,4 +1,5 @@
-use std::io::{Read, Seek};
+use std::io::{Read, Seek, SeekFrom};
+use std::mem;
 use byteorder::{ReadBytesExt, LE};
 use crate::header::Header;
 
@@ -68,6 +69,54 @@ pub struct ImageDataDirectory {
     pub size: u32,             // Size of the data
 }
 
+
+#[repr(C)]
+struct DosHeader {
+    pub signature: u16,                           // Magic number: 0x5A4D ("MZ")
+    pub bytes_on_last_page: u16,                  // e_cblp
+    pub pages_in_file: u16,                       // e_cp
+    pub relocations: u16,                         // e_crlc
+    pub size_of_header_in_paragraphs: u16,        // e_cparhdr
+    pub minimum_extra_paragraphs_needed: u16,     // e_minalloc
+    pub maximum_extra_paragraphs_needed: u16,     // e_maxalloc
+    pub initial_relative_ss: u16,                 // e_ss
+    pub initial_sp: u16,                          // e_sp
+    pub checksum: u16,                            // e_csum
+    pub initial_ip: u16,                          // e_ip
+    pub initial_relative_cs: u16,                 // e_cs
+    pub file_address_of_relocation_table: u16,    // e_lfarlc
+    pub overlay_number: u16,                      // e_ovno
+    pub reserved: [u16; 4],                       // e_res[4]
+    pub oem_id: u16,                              // e_oemid
+    pub oem_info: u16,                            // e_oeminfo
+    pub reserved2: [u16; 10],                     // e_res2[10]
+    pub pe_pointer: u32,                          // e_lfanew - offset to PE header
+}
+
+
+
+fn read_dos_header<R: Read + Seek>(cur: &mut R) -> anyhow::Result<DosHeader> {
+    // Seek to the beginning of the file
+    cur.seek(std::io::SeekFrom::Start(0))?;
+
+    // Create a buffer of the exact size of DosHeader (64 bytes)
+    let mut buffer = [0u8; mem::size_of::<DosHeader>()];
+
+    // Read exactly 64 bytes into the buffer
+    cur.read_exact(&mut buffer)?;
+
+    // Safely transmute the bytes into the DosHeader struct
+    let dos_header: DosHeader = unsafe {
+        std::ptr::read(buffer.as_ptr() as *const DosHeader)
+    };
+
+    // Verify the DOS signature (MZ magic bytes)
+    if dos_header.signature != 0x5A4D {
+        anyhow::bail!("Invalid DOS signature: expected 0x5A4D, got 0x{:04X}", dos_header.signature);
+    }
+
+    Ok(dos_header)
+}
 impl Header for Pe64Header{
     fn entry_point(&self) -> u64 {
         self.optional_header.address_of_entry_point as u64
@@ -94,6 +143,9 @@ impl Header for Pe64Header{
     where
         Self: Sized
     {
+        let dos_header = read_dos_header(cur)?;
+        cur.seek(SeekFrom::Start(dos_header.pe_pointer as u64))?;
+
         let signature = cur.read_u32::<LE>()?;
         if signature != 0x00004550 {
             anyhow::bail!("Invalid PE signature: expected 0x00004550, got 0x{:08X}", signature);

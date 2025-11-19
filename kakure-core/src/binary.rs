@@ -2,20 +2,22 @@ use crate::eh_frame::parse_eh_frame;
 use crate::header::elf::Elf64Ehdr;
 use crate::header::Header;
 use crate::symtab::{parse_symtab_64, Elf64Sym};
-use crate::{FunctionSignature, KSection, PlatformType};
+use crate::{FunctionSignature, PlatformType};
 use anyhow::Result;
 use anyhow::{anyhow, bail};
 use gimli::{NativeEndian, UnwindSection};
 use goblin::Object;
 use std::collections::HashMap;
 use std::io::{self, Read, Seek, SeekFrom};
+use crate::elf::KSection;
+use crate::header::pe::Pe64Header;
 
 pub struct BinaryAnalysis {
     pub functions: Vec<FunctionSignature>,
     pub path: String,
     pub section_headers: Vec<KSection>,
     pub is_stripped: bool,
-    pub header: Box<Elf64Ehdr>,
+    pub header: Box<dyn Header>,
     raw_buffer: Vec<u8>,
     section_map: HashMap<String, Vec<u8>>,
 }
@@ -47,7 +49,7 @@ impl BinaryAnalysis {
 
         let (header, sections, stripped) = match obj {
             Object::Elf(elf) => Self::parse_elf(&mut cursor, elf, buf_len)?,
-            Object::PE(pe) => Self::parse_pe(&mut cursor, pe)?,
+            Object::PE(pe) => Self::parse_pe(&mut cursor,&pe)?,
             _ => return Err(anyhow!("Malformed binary")),
         };
 
@@ -129,7 +131,7 @@ impl BinaryAnalysis {
         cursor: &mut std::io::Cursor<&Vec<u8>>,
         elf: goblin::elf::Elf,
         buf_len: usize,
-    ) -> Result<(Box<Elf64Ehdr>, Vec<KSection>, bool)> {
+    ) -> Result<(Box<dyn Header>, Vec<KSection>, bool)> {
         let elf_hdr = Elf64Ehdr::from_reader(cursor)?;
         let mut header = Box::new(elf_hdr);
 
@@ -156,11 +158,16 @@ impl BinaryAnalysis {
     }
 
     /// Parse PE format
+    /// We dont need to do any stripped binary bullshit that we do with elfs
+    /// and we can just use the PE object that goblin gives us, im keeping this in codebase
+    /// for the lulz
     fn parse_pe(
-        _cursor: &mut std::io::Cursor<&Vec<u8>>,
-        _pe: goblin::pe::PE,
-    ) -> Result<(Box<Elf64Ehdr>, Vec<KSection>, bool)> {
-        todo!()
+        cursor: &mut std::io::Cursor<&Vec<u8>>,
+        pe: &goblin::pe::PE,
+    ) -> Result<(Box<dyn Header>, Vec<KSection>, bool)> {
+        let pe_hdr = Box::new(Pe64Header::from_reader(cursor)?);
+        let sections = KSection::from_goblin_pe_section(cursor,pe)?;
+        Ok((pe_hdr, sections,false))
     }
 
     /// Analyze functions from .eh_frame
